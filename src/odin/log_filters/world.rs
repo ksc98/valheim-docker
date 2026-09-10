@@ -153,8 +153,7 @@ static WORLD_SAVE: LazyLock<Regex> = LazyLock::new(|| {
 });
 static BACKUP: LazyLock<Regex> =
   LazyLock::new(|| Regex::new(r"World auto backup saved \[([\d,.]+)ms\]").unwrap());
-static CONNECTED: LazyLock<Regex> =
-  LazyLock::new(|| Regex::new(r"Game server connected$").unwrap());
+static CONNECTED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"Game server connected").unwrap());
 static RPC_TIMEOUT: LazyLock<Regex> =
   LazyLock::new(|| Regex::new(r"ZRpc timeout detected").unwrap());
 static WRONG_PASSWORD: LazyLock<Regex> =
@@ -210,7 +209,8 @@ mod tests {
     assert!((s.saves[0].seconds - 2.844).abs() < 1e-9);
     assert_eq!(s.saves[1].kind, "backup");
     s.boot_started = Some(Utc::now().timestamp() - 52);
-    assert!(s.apply("09/09/2026 23:40:04: Game server connected"));
+    // lines arrive from the tail with their newline
+    assert!(s.apply("09/09/2026 23:40:04: Game server connected\n"));
     assert!(s.load_seconds.is_some_and(|l| (52.0..54.0).contains(&l)));
     assert!(s.apply("09/09/2026 22:00:00: ZRpc timeout detected"));
     assert_eq!(s.rpc_timeouts, 1);
