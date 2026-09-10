@@ -27,6 +27,7 @@ pub struct WrongPassword {
 }
 
 /// World-level facts parsed from `valheim_server.log`, kept in `world.stats` for Huginn.
+/// Survives restarts; `odin start` only resets the per-boot fields.
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct WorldStats {
   pub zdo_count: Option<u64>,
@@ -73,13 +74,13 @@ impl WorldStats {
     }
   }
 
-  /// Forgets everything; called when the server starts so the stats only reflect this run.
-  pub fn clear() {
-    WorldStats {
-      boot_started: Some(Utc::now().timestamp()),
-      ..WorldStats::default()
-    }
-    .save();
+  /// Marks a server start: records when it launched and drops the per-boot fields.
+  pub fn server_started() {
+    let mut stats = WorldStats::load();
+    stats.boot_started = Some(Utc::now().timestamp());
+    stats.load_seconds = None;
+    stats.connections = None;
+    stats.save();
   }
 
   fn record_save(&mut self, kind: &str, ms: &str) {
@@ -117,6 +118,8 @@ impl WorldStats {
     if let Some(c) = CONNECTIONS.captures(line) {
       self.connections = c[1].parse().ok();
       self.zdo_count = c[2].parse().ok();
+    } else if let Some(c) = LOAD_CHUNKS.captures(line) {
+      self.zdo_count = c[1].replace(',', "").parse().ok();
     } else if let Some(c) = DAY.captures(line) {
       self.day = c[1].parse().ok();
     } else if let Some(c) = WORLD_SAVE.captures(line) {
@@ -142,6 +145,8 @@ impl WorldStats {
 
 static CONNECTIONS: LazyLock<Regex> =
   LazyLock::new(|| Regex::new(r"Connections (\d+) ZDOS:(\d+)").unwrap());
+static LOAD_CHUNKS: LazyLock<Regex> =
+  LazyLock::new(|| Regex::new(r"ZDOMan\.LoadChunks - Starting to load ([\d,]+) zdos").unwrap());
 static DAY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"Time [\d.]+, day:(\d+)\s").unwrap());
 static WORLD_SAVE: LazyLock<Regex> = LazyLock::new(|| {
   Regex::new(r"World save \(\d+/\d+\) done\. Total time \[([\d,.]+)ms\]").unwrap()
@@ -162,6 +167,7 @@ static HISTORY: LazyLock<Regex> = LazyLock::new(|| {
 pub fn handle_world_events(line: &str) {
   // cheap pre-check so the file is only touched for lines we track
   if !line.contains("ZDOS:")
+    && !line.contains("Starting to load")
     && !line.contains("skipspeed:")
     && !line.contains("World save (")
     && !line.contains("auto backup saved")
@@ -189,6 +195,10 @@ mod tests {
     assert!(s.apply("09/09/2026 21:45:56:  Connections 3 ZDOS:76806  sent:250 recv:1009"));
     assert_eq!(s.zdo_count, Some(76806));
     assert_eq!(s.connections, Some(3));
+    assert!(s.apply(
+      "09/09/2026 23:39:40: ZDOMan.LoadChunks - Starting to load 77,904 zdos from 12 Chunks. SessionID: 1, WorldVersion: 35 [DeepNorth]"
+    ));
+    assert_eq!(s.zdo_count, Some(77904));
     assert!(s.apply(
       "09/09/2026 21:31:21: Time 8893.43944863975, day:4    nextm:9270.00001072884  skipspeed:31.38"
     ));

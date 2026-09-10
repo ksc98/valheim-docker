@@ -26,16 +26,16 @@ Time in game: `time() - valheim_player_joined_timestamp_seconds`.
 
 ## World
 
-Parsed by Odin from the server log into `world.stats` (cleared on every server start, so the counters restart at 0 with the server).
+Parsed by Odin from the server log into `world.stats`, which survives server restarts (only the load time is per boot).
 
 | Metric                                                | Labels             | Description                                                                                                                    |
 | ----------------------------------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
-| `valheim_world_zdo_count`                             |                    | Objects (ZDOs) in the world; the server logs it every 10 minutes.                                                              |
+| `valheim_world_zdo_count`                             |                    | Objects (ZDOs) in the world: the count loaded at boot, then the server's report every 10 minutes.                              |
 | `valheim_world_day`                                   |                    | In-game day, updated when the players sleep through a night.                                                                   |
 | `valheim_world_load_seconds`                          |                    | Seconds from `odin start` to `Game server connected`.                                                               |
 | `valheim_world_last_save_seconds`                     | `type`             | Duration of the latest `save` (world autosave) or `backup` (world auto backup).                                                 |
 | `valheim_world_last_save_timestamp_seconds`           | `type`             | Unix time the latest `save` / `backup` finished.                                                                               |
-| `valheim_world_save_duration_seconds` (histogram)     | `type`, `le`       | Save durations since server start (`_bucket`, `_sum`, `_count`); buckets 0.1 s to 60 s. Feeds a Grafana heatmap or quantiles. |
+| `valheim_world_save_duration_seconds` (histogram)     | `type`, `le`       | The last 500 save durations (`_bucket`, `_sum`, `_count`); buckets 0.1 s to 60 s. Feeds a Grafana heatmap or quantiles.       |
 | `valheim_rpc_timeouts_total`                          |                    | `ZRpc timeout detected` occurrences (a peer stopped answering).                                                                |
 | `valheim_wrong_password_total`                        | `steam_id`, `name` | Rejected joins per Steam id; `name` is the Steam display name when that id has joined before, else empty.                      |
 
