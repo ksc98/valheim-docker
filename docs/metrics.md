@@ -32,7 +32,7 @@ Parsed by Odin from the server log into `world.stats` (cleared on every server s
 | ----------------------------------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
 | `valheim_world_zdo_count`                             |                    | Objects (ZDOs) in the world; the server logs it every 10 minutes.                                                              |
 | `valheim_world_day`                                   |                    | In-game day, updated when the players sleep through a night.                                                                   |
-| `valheim_world_load_seconds`                          |                    | Seconds from the first boot log line to `Game server connected`.                                                               |
+| `valheim_world_load_seconds`                          |                    | Seconds from `odin start` to `Game server connected`.                                                               |
 | `valheim_world_last_save_seconds`                     | `type`             | Duration of the latest `save` (world autosave) or `backup` (world auto backup).                                                 |
 | `valheim_world_last_save_timestamp_seconds`           | `type`             | Unix time the latest `save` / `backup` finished.                                                                               |
 | `valheim_world_save_duration_seconds` (histogram)     | `type`, `le`       | Save durations since server start (`_bucket`, `_sum`, `_count`); buckets 0.1 s to 60 s. Feeds a Grafana heatmap or quantiles. |
