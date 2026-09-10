@@ -127,7 +127,8 @@ impl WorldStats {
     } else if let Some(c) = BACKUP.captures(line) {
       self.record_save("backup", &c[1]);
     } else if CONNECTED.is_match(line) {
-      if let Some(start) = self.boot_started {
+      // First registration only: the game re-registers after a failure and logs the same line.
+      if let (Some(start), None) = (self.boot_started, self.load_seconds) {
         self.load_seconds = Some((Utc::now().timestamp() - start) as f64);
       }
     } else if RPC_TIMEOUT.is_match(line) {
@@ -153,8 +154,10 @@ static WORLD_SAVE: LazyLock<Regex> = LazyLock::new(|| {
 });
 static BACKUP: LazyLock<Regex> =
   LazyLock::new(|| Regex::new(r"World auto backup saved \[([\d,.]+)ms\]").unwrap());
+// Steam registration failures log `Game server connected failed`; the success line ends at
+// `connected` (the tail delivers it with its newline).
 static CONNECTED: LazyLock<Regex> =
-  LazyLock::new(|| Regex::new(r"Game server connected$").unwrap());
+  LazyLock::new(|| Regex::new(r"Game server connected\s*$").unwrap());
 static RPC_TIMEOUT: LazyLock<Regex> =
   LazyLock::new(|| Regex::new(r"ZRpc timeout detected").unwrap());
 static WRONG_PASSWORD: LazyLock<Regex> =
@@ -210,7 +213,15 @@ mod tests {
     assert!((s.saves[0].seconds - 2.844).abs() < 1e-9);
     assert_eq!(s.saves[1].kind, "backup");
     s.boot_started = Some(Utc::now().timestamp() - 52);
-    assert!(s.apply("09/09/2026 23:40:04: Game server connected"));
+    // a failed Steam registration has the success line as its prefix
+    assert!(!s.apply("09/09/2026 23:39:50: Game server connected failed\n"));
+    assert!(s.load_seconds.is_none());
+    // lines arrive from the tail with their newline
+    assert!(s.apply("09/09/2026 23:40:04: Game server connected\n"));
+    assert!(s.load_seconds.is_some_and(|l| (52.0..54.0).contains(&l)));
+    // re-registration after a failure logs the same line; load time stays the first one
+    s.boot_started = Some(Utc::now().timestamp() - 900);
+    assert!(s.apply("09/09/2026 23:55:04: Game server connected\n"));
     assert!(s.load_seconds.is_some_and(|l| (52.0..54.0).contains(&l)));
     assert!(s.apply("09/09/2026 22:00:00: ZRpc timeout detected"));
     assert_eq!(s.rpc_timeouts, 1);
