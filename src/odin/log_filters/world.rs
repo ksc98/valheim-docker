@@ -1,12 +1,11 @@
 use crate::files::FileManager;
-use chrono::{NaiveDateTime, Utc};
+use chrono::Utc;
 use log::{debug, error};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
-const LOG_TIME: &str = "%m/%d/%Y %H:%M:%S";
 /// Save durations kept for the histogram (a save every 10 min ≈ 3.5 days).
 const MAX_SAVES: usize = 500;
 
@@ -37,7 +36,7 @@ pub struct WorldStats {
   pub rpc_timeouts: u64,
   pub wrong_password: Vec<WrongPassword>,
   pub saves: Vec<Save>,
-  /// log-clock seconds of the first boot line, for `load_seconds`
+  /// Unix time `odin start` launched the server, for `load_seconds`
   #[serde(default)]
   boot_started: Option<i64>,
   #[serde(default)]
@@ -76,7 +75,11 @@ impl WorldStats {
 
   /// Forgets everything; called when the server starts so the stats only reflect this run.
   pub fn clear() {
-    WorldStats::default().save();
+    WorldStats {
+      boot_started: Some(Utc::now().timestamp()),
+      ..WorldStats::default()
+    }
+    .save();
   }
 
   fn record_save(&mut self, kind: &str, ms: &str) {
@@ -120,11 +123,9 @@ impl WorldStats {
       self.record_save("save", &c[1]);
     } else if let Some(c) = BACKUP.captures(line) {
       self.record_save("backup", &c[1]);
-    } else if let Some(c) = BOOT.captures(line) {
-      self.boot_started = log_time(&c[1]);
-    } else if let Some(c) = CONNECTED.captures(line) {
-      if let (Some(start), Some(end)) = (self.boot_started, log_time(&c[1])) {
-        self.load_seconds = Some((end - start) as f64);
+    } else if CONNECTED.is_match(line) {
+      if let Some(start) = self.boot_started {
+        self.load_seconds = Some((Utc::now().timestamp() - start) as f64);
       }
     } else if RPC_TIMEOUT.is_match(line) {
       self.rpc_timeouts += 1;
@@ -139,12 +140,6 @@ impl WorldStats {
   }
 }
 
-fn log_time(s: &str) -> Option<i64> {
-  NaiveDateTime::parse_from_str(s, LOG_TIME)
-    .ok()
-    .map(|t| t.and_utc().timestamp())
-}
-
 static CONNECTIONS: LazyLock<Regex> =
   LazyLock::new(|| Regex::new(r"Connections (\d+) ZDOS:(\d+)").unwrap());
 static DAY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"Time [\d.]+, day:(\d+)\s").unwrap());
@@ -153,12 +148,8 @@ static WORLD_SAVE: LazyLock<Regex> = LazyLock::new(|| {
 });
 static BACKUP: LazyLock<Regex> =
   LazyLock::new(|| Regex::new(r"World auto backup saved \[([\d,.]+)ms\]").unwrap());
-static BOOT: LazyLock<Regex> = LazyLock::new(|| {
-  Regex::new(r"^(\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2}): Valheim version:").unwrap()
-});
-static CONNECTED: LazyLock<Regex> = LazyLock::new(|| {
-  Regex::new(r"^(\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2}): Game server connected").unwrap()
-});
+static CONNECTED: LazyLock<Regex> =
+  LazyLock::new(|| Regex::new(r"Game server connected$").unwrap());
 static RPC_TIMEOUT: LazyLock<Regex> =
   LazyLock::new(|| Regex::new(r"ZRpc timeout detected").unwrap());
 static WRONG_PASSWORD: LazyLock<Regex> =
@@ -174,7 +165,6 @@ pub fn handle_world_events(line: &str) {
     && !line.contains("skipspeed:")
     && !line.contains("World save (")
     && !line.contains("auto backup saved")
-    && !line.contains("Valheim version:")
     && !line.contains("Game server connected")
     && !line.contains("ZRpc timeout detected")
     && !line.contains("has wrong password")
@@ -209,9 +199,9 @@ mod tests {
     assert_eq!(s.saves[0].kind, "save");
     assert!((s.saves[0].seconds - 2.844).abs() < 1e-9);
     assert_eq!(s.saves[1].kind, "backup");
-    assert!(s.apply("09/09/2026 23:39:12: Valheim version: l-1.0.7 (network version 39)"));
+    s.boot_started = Some(Utc::now().timestamp() - 52);
     assert!(s.apply("09/09/2026 23:40:04: Game server connected"));
-    assert_eq!(s.load_seconds, Some(52.0));
+    assert!(s.load_seconds.is_some_and(|l| (52.0..54.0).contains(&l)));
     assert!(s.apply("09/09/2026 22:00:00: ZRpc timeout detected"));
     assert_eq!(s.rpc_timeouts, 1);
     assert!(s.apply("09/09/2026 22:41:31: Player history entry with index 2:  Viking (Steam_76561190000000000, 164E6C13B3370AED)"));
