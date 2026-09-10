@@ -37,6 +37,13 @@ Parsed by Odin from the server log into `world.stats`, which survives server res
 | `valheim_world_last_save_timestamp_seconds`           | `type`             | Unix time the latest `save` / `backup` finished.                                                                               |
 | `valheim_world_save_duration_seconds` (histogram)     | `type`, `le`       | The last 500 save durations (`_bucket`, `_sum`, `_count`); buckets 0.1 s to 60 s. Feeds a Grafana heatmap or quantiles.       |
 | `valheim_rpc_timeouts_total`                          |                    | `ZRpc timeout detected` occurrences (a peer stopped answering).                                                                |
+| `valheim_world_bytes`                                 |                    | Size of the world on disk (the `worlds_local/<world>/` chunk directory, or the legacy `.db`), refreshed at boot and after each save. |
+| `valheim_update_available`                            |                    | `1` when the last `odin update --check` found a newer build (the scheduler runs it on `AUTO_UPDATE_SCHEDULE`).                |
+| `valheim_update_checked_timestamp_seconds`            |                    | Unix time of that check.                                                                                                       |
+| `valheim_server_build`                                | `current`, `latest`| Installed and latest Steam build ids from that check (value always `1`).                                                       |
+| `valheim_backups_count`                               |                    | Files in `BACKUP_LOCATION`.                                                                                                    |
+| `valheim_backups_bytes`                               |                    | Their total size.                                                                                                              |
+| `valheim_backup_last_timestamp_seconds`               |                    | Modification time of the newest backup file.                                                                                   |
 | `valheim_wrong_password_total`                        | `steam_id`, `name` | Rejected joins per Steam id; `name` is the Steam display name when that id has joined before, else empty.                      |
 
 ## System
