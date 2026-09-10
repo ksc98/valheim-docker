@@ -41,6 +41,14 @@ impl UpdateInfo {
   pub fn update_available(&self) -> bool {
     self.current_build_id != self.latest_build_id
   }
+
+  pub fn current_build_id(&self) -> &str {
+    &self.current_build_id
+  }
+
+  pub fn latest_build_id(&self) -> &str {
+    &self.latest_build_id
+  }
 }
 
 impl Default for UpdateInfo {
