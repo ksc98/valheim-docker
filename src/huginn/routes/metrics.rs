@@ -1,6 +1,8 @@
 use crate::fetch_info;
 use odin::log_filters::{PlayerList, WorldStats};
+use odin::utils::environment::fetch_var;
 use shared::system::collect_system_metrics;
+use std::time::UNIX_EPOCH;
 
 const SAVE_BUCKETS: [f64; 11] = [0.1, 0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0, 20.0, 30.0, 60.0];
 
@@ -84,9 +86,45 @@ pub fn invoke() -> String {
       .into_iter()
       .chain(players)
       .chain(world_metrics(&WorldStats::load()))
+      .chain(backup_metrics())
       .collect::<Vec<_>>()
       .join("\n")
   )
+}
+
+/// Files in `BACKUP_LOCATION` (Odin's backup archives): count, total size, newest mtime.
+fn backup_metrics() -> Vec<String> {
+  let dir = fetch_var(
+    "BACKUP_LOCATION",
+    &format!("{}/backups", odin::utils::get_working_dir()),
+  );
+  let Ok(entries) = std::fs::read_dir(&dir) else {
+    return Vec::new();
+  };
+  let (mut count, mut bytes, mut newest) = (0u64, 0u64, 0i64);
+  for meta in entries.flatten().filter_map(|e| e.metadata().ok()) {
+    if !meta.is_file() {
+      continue;
+    }
+    count += 1;
+    bytes += meta.len();
+    if let Some(secs) = meta
+      .modified()
+      .ok()
+      .and_then(|m| m.duration_since(UNIX_EPOCH).ok())
+      .map(|d| d.as_secs() as i64)
+    {
+      newest = newest.max(secs);
+    }
+  }
+  let mut out = vec![
+    format!("valheim_backups_count {count}"),
+    format!("valheim_backups_bytes {bytes}"),
+  ];
+  if newest > 0 {
+    out.push(format!("valheim_backup_last_timestamp_seconds {newest}"));
+  }
+  out
 }
 
 /// Metrics Odin parses from the server log into `world.stats`.
@@ -102,6 +140,21 @@ fn world_metrics(world: &WorldStats) -> Vec<String> {
     out.push(format!("valheim_world_load_seconds {s}"));
   }
   out.push(format!("valheim_rpc_timeouts_total {}", world.rpc_timeouts));
+  if let Some(b) = world.world_bytes {
+    out.push(format!("valheim_world_bytes {b}"));
+  }
+  if let Some(u) = &world.update {
+    out.push(format!("valheim_update_available {}", u.available as i32));
+    out.push(format!(
+      "valheim_update_checked_timestamp_seconds {}",
+      u.checked_at
+    ));
+    out.push(format!(
+      "valheim_server_build{{current=\"{}\", latest=\"{}\"}} 1",
+      escape_prom_label_value(&u.current_build),
+      escape_prom_label_value(&u.latest_build)
+    ));
+  }
   for w in &world.wrong_password {
     out.push(format!(
       "valheim_wrong_password_total{{steam_id=\"{}\", name=\"{}\"}} {}",
@@ -161,7 +214,7 @@ fn world_metrics(world: &WorldStats) -> Vec<String> {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use odin::log_filters::{Save, WrongPassword};
+  use odin::log_filters::{Save, UpdateCheck, WrongPassword};
 
   #[test]
   fn world_metrics_render() {
@@ -170,6 +223,13 @@ mod tests {
     world.day = Some(4);
     world.load_seconds = Some(52.0);
     world.rpc_timeouts = 1;
+    world.world_bytes = Some(10_485_760);
+    world.update = Some(UpdateCheck {
+      current_build: "111".into(),
+      latest_build: "222".into(),
+      available: true,
+      checked_at: 1_789_000_200,
+    });
     world.wrong_password = vec![WrongPassword {
       steam_id: "76561190000000000".into(),
       name: "Viking".into(),
@@ -193,6 +253,10 @@ mod tests {
     assert!(text.contains("valheim_world_day 4"));
     assert!(text.contains("valheim_world_load_seconds 52"));
     assert!(text.contains("valheim_rpc_timeouts_total 1"));
+    assert!(text.contains("valheim_world_bytes 10485760"));
+    assert!(text.contains("valheim_update_available 1"));
+    assert!(text.contains("valheim_update_checked_timestamp_seconds 1789000200"));
+    assert!(text.contains("valheim_server_build{current=\"111\", latest=\"222\"} 1"));
     assert!(text
       .contains("valheim_wrong_password_total{steam_id=\"76561190000000000\", name=\"Viking\"} 2"));
     assert!(text.contains("valheim_world_last_save_seconds{type=\"save\"} 2.844"));
