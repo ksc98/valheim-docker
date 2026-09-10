@@ -1,6 +1,6 @@
 use crate::{
   files::config::load_config,
-  log_filters::PlayerList,
+  log_filters::{PlayerList, WorldStats},
   notifications::enums::{event_status::EventStatus, notification_event::NotificationEvent},
   server,
 };
@@ -12,6 +12,7 @@ pub fn invoke(dry_run: bool) {
   info!(target: "commands_start", "Setting up start scripts...");
   NotificationEvent::Start(EventStatus::Running).send_notification(None);
   PlayerList::clear();
+  WorldStats::clear();
   debug!(target: "commands_start", "Loading config file...");
   let config = load_config();
   debug!(target: "commands_start", "Dry run condition: {dry_run}");

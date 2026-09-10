@@ -1,6 +1,6 @@
 # Metrics
 
-Huginn serves Prometheus metrics at `http://<host>:<HTTP_PORT>/metrics` (default port `3000`). All metrics are gauges. Server metrics come from the Steam A2S query, player metrics from Odin's player tracking (see [players](#players)), system metrics from the container's view of the host.
+Huginn serves Prometheus metrics at `http://<host>:<HTTP_PORT>/metrics` (default port `3000`). Server metrics come from the Steam A2S query, player and world metrics from Odin's log tracking, system metrics from the container's view of the host. Everything is a gauge except the `_total` counters and the save-duration histogram.
 
 ## Server
 
@@ -23,6 +23,21 @@ One series per player currently online. Names come from the server log (`Got cha
 | `valheim_player_joined_timestamp_seconds` | `player` | Unix time the player joined. Kept across deaths and respawns. |
 
 Time in game: `time() - valheim_player_joined_timestamp_seconds`.
+
+## World
+
+Parsed by Odin from the server log into `world.stats` (cleared on every server start, so the counters restart at 0 with the server).
+
+| Metric                                                | Labels             | Description                                                                                                                    |
+| ----------------------------------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| `valheim_world_zdo_count`                             |                    | Objects (ZDOs) in the world; the server logs it every 10 minutes.                                                              |
+| `valheim_world_day`                                   |                    | In-game day, updated when the players sleep through a night.                                                                   |
+| `valheim_world_load_seconds`                          |                    | Seconds from the first boot log line to `Game server connected`.                                                               |
+| `valheim_world_last_save_seconds`                     | `type`             | Duration of the latest `save` (world autosave) or `backup` (world auto backup).                                                 |
+| `valheim_world_last_save_timestamp_seconds`           | `type`             | Unix time the latest `save` / `backup` finished.                                                                               |
+| `valheim_world_save_duration_seconds` (histogram)     | `type`, `le`       | Save durations since server start (`_bucket`, `_sum`, `_count`); buckets 0.1 s to 60 s. Feeds a Grafana heatmap or quantiles. |
+| `valheim_rpc_timeouts_total`                          |                    | `ZRpc timeout detected` occurrences (a peer stopped answering).                                                                |
+| `valheim_wrong_password_total`                        | `steam_id`, `name` | Rejected joins per Steam id; `name` is the Steam display name when that id has joined before, else empty.                      |
 
 ## System
 
@@ -56,6 +71,18 @@ valheim_sys_load_average {window="5m"} 0.94
 valheim_sys_load_average {window="15m"} 1.01
 valheim_player_online{player="Viking"} 1
 valheim_player_joined_timestamp_seconds{player="Viking"} 1789020710
+valheim_world_zdo_count 76806
+valheim_world_day 4
+valheim_world_load_seconds 52
+valheim_rpc_timeouts_total 0
+valheim_world_last_save_seconds{type="save"} 2.844
+valheim_world_last_save_timestamp_seconds{type="save"} 1789021771
+# TYPE valheim_world_save_duration_seconds histogram
+valheim_world_save_duration_seconds_bucket{type="save", le="0.1"} 0
+...
+valheim_world_save_duration_seconds_bucket{type="save", le="+Inf"} 6
+valheim_world_save_duration_seconds_sum{type="save"} 17.9
+valheim_world_save_duration_seconds_count{type="save"} 6
 ```
 
 Scrape it like any other target (Prometheus `static_configs`, or a Kubernetes `ServiceMonitor` on the Huginn port). A Grafana dashboard walkthrough is in [discussion #330](https://github.com/mbround18/valheim-docker/discussions/330).
