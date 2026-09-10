@@ -2,6 +2,7 @@ use log::{debug, error, info};
 
 use std::process::exit;
 
+use crate::log_filters::WorldStats;
 use crate::server;
 
 const EXIT_NO_UPDATE_AVAILABLE: i32 = 10;
@@ -37,7 +38,9 @@ enum UpdateState {
 
 impl UpdateState {
   fn new() -> Self {
-    if server::update_is_available() {
+    let info = server::UpdateInfo::new();
+    WorldStats::record_update_check(info.current_build_id(), info.latest_build_id());
+    if info.update_available() {
       Self::Pending
     } else {
       Self::UpToDate

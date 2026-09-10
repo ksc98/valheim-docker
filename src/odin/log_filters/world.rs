@@ -1,4 +1,6 @@
 use crate::files::FileManager;
+use crate::utils::common_paths::saves_directory;
+use crate::utils::environment::fetch_var;
 use chrono::Utc;
 use log::{debug, error};
 use regex::Regex;
@@ -16,6 +18,16 @@ pub struct Save {
   pub seconds: f64,
   /// Unix time the save finished
   pub at: i64,
+}
+
+/// Result of the last `odin update --check`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct UpdateCheck {
+  pub current_build: String,
+  pub latest_build: String,
+  pub available: bool,
+  /// Unix time of the check
+  pub checked_at: i64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -37,6 +49,12 @@ pub struct WorldStats {
   pub rpc_timeouts: u64,
   pub wrong_password: Vec<WrongPassword>,
   pub saves: Vec<Save>,
+  /// Size of the world on disk after the last save (and at boot): the chunked
+  /// `worlds_local/<world>/` directory, or the legacy `<world>.db` file
+  #[serde(default)]
+  pub world_bytes: Option<u64>,
+  #[serde(default)]
+  pub update: Option<UpdateCheck>,
   /// Unix time `odin start` launched the server, for `load_seconds`
   #[serde(default)]
   boot_started: Option<i64>,
@@ -83,10 +101,46 @@ impl WorldStats {
     stats.save();
   }
 
+  /// Stores the result of an update check (called by `odin update`).
+  pub fn record_update_check(current_build: &str, latest_build: &str) {
+    let mut stats = WorldStats::load();
+    stats.update = Some(UpdateCheck {
+      current_build: current_build.to_string(),
+      latest_build: latest_build.to_string(),
+      available: current_build != latest_build,
+      checked_at: Utc::now().timestamp(),
+    });
+    stats.save();
+  }
+
+  fn stat_world(&mut self) {
+    let base = format!(
+      "{}/worlds_local/{}",
+      saves_directory(),
+      fetch_var("WORLD", "Dedicated")
+    );
+    let bytes = match std::fs::read_dir(&base) {
+      Ok(entries) => entries
+        .flatten()
+        .filter_map(|e| e.metadata().ok())
+        .filter(|m| m.is_file())
+        .map(|m| m.len())
+        .sum(),
+      Err(_) => match std::fs::metadata(format!("{base}.db")) {
+        Ok(meta) => meta.len(),
+        Err(_) => return,
+      },
+    };
+    self.world_bytes = Some(bytes);
+  }
+
   fn record_save(&mut self, kind: &str, ms: &str) {
     let Ok(ms) = ms.replace(',', "").parse::<f64>() else {
       return;
     };
+    if kind == "save" {
+      self.stat_world();
+    }
     self.saves.push(Save {
       kind: kind.to_string(),
       seconds: ms / 1000.0,
@@ -120,6 +174,7 @@ impl WorldStats {
       self.zdo_count = c[2].parse().ok();
     } else if let Some(c) = LOAD_CHUNKS.captures(line) {
       self.zdo_count = c[1].replace(',', "").parse().ok();
+      self.stat_world();
     } else if let Some(c) = DAY.captures(line) {
       self.day = c[1].parse().ok();
     } else if let Some(c) = WORLD_SAVE.captures(line) {
