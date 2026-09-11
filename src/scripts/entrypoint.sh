@@ -24,17 +24,11 @@ runtime_user_label() {
   fi
 }
 
-# Run a command with elevated privileges when possible.
-# If elevation is not available (common in explicit rootless user mode),
-# return non-zero and let the caller decide whether to skip.
+# Run a command that needs root. Only possible when the container was started as
+# root; in rootless mode return non-zero and let the caller decide whether to skip.
 run_privileged() {
   if [ "$(id -u)" -eq 0 ]; then
     "$@"
-    return $?
-  fi
-
-  if command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
-    sudo "$@"
     return $?
   fi
 
@@ -44,7 +38,7 @@ run_privileged() {
 # Best-effort wrapper for privileged commands.
 run_privileged_or_warn() {
   if ! run_privileged "$@"; then
-    log "Skipping privileged command (no sudo/root): $*"
+    log "Skipping privileged command (not root): $*"
   fi
 }
 
@@ -208,8 +202,13 @@ main() {
   log "Navigating to steam home..."
   cd /home/steam/valheim || exit 1
 
-  # Launch the Valheim server
+  # Launch the Valheim server. Started as root, the ownership fixes above are done and
+  # nothing else needs privileges, so drop to the game user for good (gosu execs, no
+  # setuid binary stays reachable).
   log "Launching server..."
+  if [ "$(id -u)" -eq 0 ]; then
+    exec gosu "${PUID}:${PGID}" /home/steam/scripts/start_valheim.sh
+  fi
   exec /home/steam/scripts/start_valheim.sh
 }
 

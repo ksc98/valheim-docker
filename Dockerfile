@@ -68,10 +68,8 @@ ARG GITHUB_REPOSITORY="not-set"
 # Pull Odin binaries from odin-runtime stage
 COPY --from=odin --chmod=755 /apps/odin /apps/huginn /usr/local/bin/
 
-# Set version information and configure sudoers
-RUN printf "${GITHUB_SHA}\n${GITHUB_REF}\n${GITHUB_REPOSITORY}\n" >/home/steam/.version && \
-    echo "root ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers && \
-    echo "steam ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+# Set version information
+RUN printf "${GITHUB_SHA}\n${GITHUB_REF}\n${GITHUB_REPOSITORY}\n" >/home/steam/.version
 
 
 # SteamCMD setup
