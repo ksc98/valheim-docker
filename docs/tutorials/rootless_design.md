@@ -2,6 +2,8 @@
 
 This project uses a rootless container design to reduce security risk. The container does not run as root by default, and you should set an explicit user so mounted volumes have correct ownership.
 
+If you do start the container as root (`--user root`), the entrypoint uses it only to fix the ownership of the mounted volumes to `PUID:PGID`, then switches to that user with `gosu` before launching the server. The game, Odin and Huginn never run as root, and the image contains no `sudo`, so a compromised server process has no way back to root.
+
 ## Why Rootless Matters
 
 - Reduces the blast radius if a process is compromised
