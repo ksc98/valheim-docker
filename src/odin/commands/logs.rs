@@ -219,13 +219,20 @@ pub(crate) fn is_already_formatted(line: &str) -> bool {
   false
 }
 
+/// True for a game log line re-emitted by BepInEx's console logger (`[<level>: Unity Log] …`,
+/// any level). The game already writes the original line to the same file, so the echo must
+/// not be logged or parsed a second time.
+pub(crate) fn is_unity_log_echo(line: &str) -> bool {
+  line.trim_start().starts_with('[') && line.contains(": Unity Log]")
+}
+
 /// Core formatter: processes a single logical line of text from the log and generates appropriate log messages and notifications.
 fn handle_line_core(path: &PathBuf, line: &str) {
   if line.trim().is_empty() {
     return;
   }
   let outline = line.trim_end();
-  if line.contains("[Info   : Unity Log]") {
+  if is_unity_log_echo(line) {
     return;
   }
 
@@ -376,7 +383,7 @@ pub async fn invoke(lines: Option<u16>, watch: bool) {
 
 #[cfg(test)]
 mod tests {
-  use super::{is_already_formatted, tail_file, LogTail, ANCHOR_BYTES};
+  use super::{is_already_formatted, is_unity_log_echo, tail_file, LogTail, ANCHOR_BYTES};
   use serial_test::serial;
   use std::io::Write;
   use std::path::{Path, PathBuf};
@@ -446,6 +453,32 @@ mod tests {
       .iter()
       .map(|line| line.trim_end().to_string())
       .collect()
+  }
+
+  #[test]
+  fn unity_log_echo_any_level() {
+    assert!(is_unity_log_echo(
+      "[Info   : Unity Log] 09/11/2026 14:45:52: Game server connected"
+    ));
+    assert!(is_unity_log_echo(
+      "[Warning: Unity Log] 09/11/2026 14:45:52: ZRpc timeout detected"
+    ));
+    assert!(is_unity_log_echo(
+      "[Error  : Unity Log] 09/11/2026 14:45:52: Error saving world"
+    ));
+  }
+
+  #[test]
+  fn game_and_plugin_lines_are_not_echoes() {
+    assert!(!is_unity_log_echo(
+      "09/11/2026 14:45:52: Game server connected"
+    ));
+    assert!(!is_unity_log_echo(
+      "[Info   :   BepInEx] Loading [SomePlugin 1.0.0]"
+    ));
+    assert!(!is_unity_log_echo(
+      "[Message:   BepInEx] BepInEx 5.4.23.3 - valheim_server"
+    ));
   }
 
   #[test]
