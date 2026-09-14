@@ -6,4 +6,4 @@ mod world;
 pub use player::{handle_player_events, OnlinePlayer, PlayerList};
 pub use probes::handle_launch_probes;
 pub use save::handle_save_events;
-pub use world::{handle_world_events, Save, UpdateCheck, WorldStats, WrongPassword};
+pub use world::{handle_world_events, GcPause, Save, UpdateCheck, WorldStats, WrongPassword};

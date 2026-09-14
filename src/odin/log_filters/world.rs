@@ -20,6 +20,17 @@ pub struct Save {
   pub at: i64,
 }
 
+/// One Unity garbage-collection pause.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct GcPause {
+  pub seconds: f64,
+  /// Unix time the pause was logged
+  pub at: i64,
+}
+
+/// GC pauses kept for the histogram.
+const MAX_GC_PAUSES: usize = 500;
+
 /// Result of the last `odin update --check`.
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct UpdateCheck {
@@ -55,6 +66,19 @@ pub struct WorldStats {
   pub world_bytes: Option<u64>,
   #[serde(default)]
   pub update: Option<UpdateCheck>,
+  /// Unity garbage-collection pauses (`Total: N ms (FindLiveObjects: … MarkObjects: …)`):
+  /// the world thread stops for the whole pause, so every server-relayed update stalls.
+  #[serde(default)]
+  pub gc_pauses: Vec<GcPause>,
+  /// Packets the server reports every 10 minutes (`Connections N ZDOS:N  sent:N recv:N`),
+  /// accumulated into monotonic counters.
+  #[serde(default)]
+  pub packets_sent: u64,
+  #[serde(default)]
+  pub packets_received: u64,
+  /// `Failed to send data k_EResult…` occurrences (a peer's socket gone while data was queued).
+  #[serde(default)]
+  pub send_failures: u64,
   /// Unix time `odin start` launched the server, for `load_seconds`
   #[serde(default)]
   boot_started: Option<i64>,
@@ -151,6 +175,19 @@ impl WorldStats {
     }
   }
 
+  fn record_gc_pause(&mut self, ms: &str) {
+    let Ok(ms) = ms.parse::<f64>() else {
+      return;
+    };
+    self.gc_pauses.push(GcPause {
+      seconds: ms / 1000.0,
+      at: Utc::now().timestamp(),
+    });
+    if self.gc_pauses.len() > MAX_GC_PAUSES {
+      self.gc_pauses.drain(..self.gc_pauses.len() - MAX_GC_PAUSES);
+    }
+  }
+
   fn record_wrong_password(&mut self, steam_id: &str) {
     let name = self.steam_names.get(steam_id).cloned().unwrap_or_default();
     match self
@@ -172,6 +209,14 @@ impl WorldStats {
     if let Some(c) = CONNECTIONS.captures(line) {
       self.connections = c[1].parse().ok();
       self.zdo_count = c[2].parse().ok();
+      if let Some(p) = PACKETS.captures(line) {
+        self.packets_sent += p[1].parse::<u64>().unwrap_or(0);
+        self.packets_received += p[2].parse::<u64>().unwrap_or(0);
+      }
+    } else if let Some(c) = GC_PAUSE.captures(line) {
+      self.record_gc_pause(&c[1]);
+    } else if SEND_FAILED.is_match(line) {
+      self.send_failures += 1;
     } else if let Some(c) = LOAD_CHUNKS.captures(line) {
       self.zdo_count = c[1].replace(',', "").parse().ok();
       self.stat_world();
@@ -217,6 +262,12 @@ static RPC_TIMEOUT: LazyLock<Regex> =
   LazyLock::new(|| Regex::new(r"ZRpc timeout detected").unwrap());
 static WRONG_PASSWORD: LazyLock<Regex> =
   LazyLock::new(|| Regex::new(r"Peer (\d+) has wrong password").unwrap());
+static GC_PAUSE: LazyLock<Regex> =
+  LazyLock::new(|| Regex::new(r"Total: ([\d.]+) ms \(FindLiveObjects:").unwrap());
+static PACKETS: LazyLock<Regex> =
+  LazyLock::new(|| Regex::new(r"ZDOS:\d+\s+sent:(\d+) recv:(\d+)").unwrap());
+static SEND_FAILED: LazyLock<Regex> =
+  LazyLock::new(|| Regex::new(r"Failed to send data k_EResult").unwrap());
 static HISTORY: LazyLock<Regex> = LazyLock::new(|| {
   Regex::new(r"Player history entry with index \d+:\s+(.+?) \(Steam_(\d+),").unwrap()
 });
@@ -231,6 +282,8 @@ pub fn handle_world_events(line: &str) {
     && !line.contains("auto backup saved")
     && !line.contains("Game server connected")
     && !line.contains("ZRpc timeout detected")
+    && !line.contains("FindLiveObjects:")
+    && !line.contains("Failed to send data")
     && !line.contains("has wrong password")
     && !line.contains("Player history entry")
   {
@@ -289,6 +342,34 @@ mod tests {
     assert_eq!(s.wrong_password[0].name, "Viking");
     assert_eq!(s.wrong_password[1].name, "");
     assert!(!s.apply("09/09/2026 22:00:00: Sending message to save player profiles"));
+  }
+
+  #[test]
+  fn parses_gc_packets_and_send_failures() {
+    let mut s = WorldStats::default();
+    assert!(s.apply("09/13/2026 21:19:57:  Connections 5 ZDOS:454072  sent:3444 recv:582"));
+    assert!(s.apply("09/13/2026 21:29:58:  Connections 5 ZDOS:454035  sent:1023 recv:732"));
+    assert_eq!(s.packets_sent, 4467);
+    assert_eq!(s.packets_received, 1314);
+    assert!(s.apply(
+      "Total: 1492.614768 ms (FindLiveObjects: 130.303470 ms CreateObjectMapping: 101.198868 ms MarkObjects: 1253.295171 ms  DeleteObjects: 7.816326 ms)\n"
+    ));
+    assert_eq!(s.gc_pauses.len(), 1);
+    assert!((s.gc_pauses[0].seconds - 1.492614768).abs() < 1e-9);
+    assert!(s.apply("09/13/2026 17:26:59: Failed to send data k_EResultNoConnection"));
+    assert!(s.apply("09/13/2026 17:26:59: Failed to send data k_EResultNoConnection"));
+    assert_eq!(s.send_failures, 2);
+    // the world/session line without the packet counters is not the Total: line
+    assert!(!s.apply("09/13/2026 17:00:00: Unloading 5 unused Assets to reduce memory usage. Loaded Objects now: 100."));
+  }
+
+  #[test]
+  fn keeps_bounded_gc_history() {
+    let mut s = WorldStats::default();
+    for _ in 0..(MAX_GC_PAUSES + 10) {
+      s.record_gc_pause("500");
+    }
+    assert_eq!(s.gc_pauses.len(), MAX_GC_PAUSES);
   }
 
   #[test]

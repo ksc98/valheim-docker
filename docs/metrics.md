@@ -37,6 +37,11 @@ Parsed by Odin from the server log into `world.stats`, which survives server res
 | `valheim_world_last_save_timestamp_seconds`           | `type`             | Unix time the latest `save` / `backup` finished.                                                                               |
 | `valheim_world_save_duration_seconds` (histogram)     | `type`, `le`       | The last 500 save durations (`_bucket`, `_sum`, `_count`); buckets 0.1 s to 60 s. Feeds a Grafana heatmap or quantiles.       |
 | `valheim_rpc_timeouts_total`                          |                    | `ZRpc timeout detected` occurrences (a peer stopped answering).                                                                |
+| `valheim_send_failures_total`                         |                    | `Failed to send data k_EResult…` occurrences (data queued for a peer whose socket was already gone).                          |
+| `valheim_packets_sent_total` / `valheim_packets_received_total` |          | Packets from the server's 10-minute `Connections … sent:N recv:N` report, accumulated into counters.                          |
+| `valheim_gc_last_pause_seconds`                       |                    | Duration of the latest Unity garbage-collection pause (`Total: N ms (FindLiveObjects: …)`); the world thread stops for it.   |
+| `valheim_gc_last_pause_timestamp_seconds`             |                    | Unix time of that pause.                                                                                                       |
+| `valheim_gc_pause_seconds` (histogram)                | `le`               | The last 500 GC pause durations; buckets 50 ms to 5 s.                                                                        |
 | `valheim_world_bytes`                                 |                    | Size of the world on disk (the `worlds_local/<world>/` chunk directory, or the legacy `.db`), refreshed at boot and after each save. |
 | `valheim_update_available`                            |                    | `1` when the last `odin update --check` found a newer build (the scheduler runs it on `AUTO_UPDATE_SCHEDULE`).                |
 | `valheim_update_checked_timestamp_seconds`            |                    | Unix time of that check.                                                                                                       |
