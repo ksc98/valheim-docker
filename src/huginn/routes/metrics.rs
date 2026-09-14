@@ -5,6 +5,8 @@ use shared::system::collect_system_metrics;
 use std::time::UNIX_EPOCH;
 
 const SAVE_BUCKETS: [f64; 11] = [0.1, 0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0, 20.0, 30.0, 60.0];
+/// GC pause buckets: 50 ms to 5 s.
+const GC_BUCKETS: [f64; 8] = [0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 3.0, 5.0];
 
 fn escape_prom_label_value(value: &str) -> String {
   value
@@ -140,6 +142,41 @@ fn world_metrics(world: &WorldStats) -> Vec<String> {
     out.push(format!("valheim_world_load_seconds {s}"));
   }
   out.push(format!("valheim_rpc_timeouts_total {}", world.rpc_timeouts));
+  out.push(format!(
+    "valheim_send_failures_total {}",
+    world.send_failures
+  ));
+  out.push(format!("valheim_packets_sent_total {}", world.packets_sent));
+  out.push(format!(
+    "valheim_packets_received_total {}",
+    world.packets_received
+  ));
+  if let Some(last) = world.gc_pauses.last() {
+    out.push(format!("valheim_gc_last_pause_seconds {}", last.seconds));
+    out.push(format!(
+      "valheim_gc_last_pause_timestamp_seconds {}",
+      last.at
+    ));
+  }
+  if !world.gc_pauses.is_empty() {
+    out.push("# TYPE valheim_gc_pause_seconds histogram".to_string());
+    let seconds: Vec<f64> = world.gc_pauses.iter().map(|g| g.seconds).collect();
+    for le in GC_BUCKETS {
+      let n = seconds.iter().filter(|&&s| s <= le).count();
+      out.push(format!(
+        "valheim_gc_pause_seconds_bucket{{le=\"{le}\"}} {n}"
+      ));
+    }
+    out.push(format!(
+      "valheim_gc_pause_seconds_bucket{{le=\"+Inf\"}} {}",
+      seconds.len()
+    ));
+    out.push(format!(
+      "valheim_gc_pause_seconds_sum {}",
+      seconds.iter().sum::<f64>()
+    ));
+    out.push(format!("valheim_gc_pause_seconds_count {}", seconds.len()));
+  }
   if let Some(b) = world.world_bytes {
     out.push(format!("valheim_world_bytes {b}"));
   }
@@ -214,6 +251,7 @@ fn world_metrics(world: &WorldStats) -> Vec<String> {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use odin::log_filters::GcPause;
   use odin::log_filters::{Save, UpdateCheck, WrongPassword};
 
   #[test]
@@ -223,6 +261,19 @@ mod tests {
     world.day = Some(4);
     world.load_seconds = Some(52.0);
     world.rpc_timeouts = 1;
+    world.send_failures = 3;
+    world.packets_sent = 4467;
+    world.packets_received = 1314;
+    world.gc_pauses = vec![
+      GcPause {
+        seconds: 0.5,
+        at: 1,
+      },
+      GcPause {
+        seconds: 1.5,
+        at: 2,
+      },
+    ];
     world.world_bytes = Some(10_485_760);
     world.update = Some(UpdateCheck {
       current_build: "111".into(),
@@ -253,6 +304,13 @@ mod tests {
     assert!(text.contains("valheim_world_day 4"));
     assert!(text.contains("valheim_world_load_seconds 52"));
     assert!(text.contains("valheim_rpc_timeouts_total 1"));
+    assert!(text.contains("valheim_send_failures_total 3"));
+    assert!(text.contains("valheim_packets_sent_total 4467"));
+    assert!(text.contains("valheim_packets_received_total 1314"));
+    assert!(text.contains("valheim_gc_last_pause_seconds 1.5"));
+    assert!(text.contains("valheim_gc_pause_seconds_bucket{le=\"2\"} 2"));
+    assert!(text.contains("valheim_gc_pause_seconds_bucket{le=\"0.5\"} 1"));
+    assert!(text.contains("valheim_gc_pause_seconds_count 2"));
     assert!(text.contains("valheim_world_bytes 10485760"));
     assert!(text.contains("valheim_update_available 1"));
     assert!(text.contains("valheim_update_checked_timestamp_seconds 1789000200"));
