@@ -79,6 +79,32 @@ pub struct WorldStats {
   /// `Failed to send data k_EResult…` occurrences (a peer's socket gone while data was queued).
   #[serde(default)]
   pub send_failures: u64,
+  /// Steam networking connection state transitions (`Got status changed msg
+  /// k_ESteamNetworkingConnectionState_<State>`), counted per state.
+  #[serde(default)]
+  pub connection_states: BTreeMap<String, u64>,
+  /// `Accepting connection k_EResult<Result>` per result (`OK` is a join that passed the
+  /// password/ban/version checks).
+  #[serde(default)]
+  pub connection_results: BTreeMap<String, u64>,
+  /// `Got handshake from client …` occurrences (connection attempts before any check).
+  #[serde(default)]
+  pub handshakes: u64,
+  /// The network protocol version the server reports in `Network version check, their:N, mine:N`.
+  #[serde(default)]
+  pub network_version: Option<u32>,
+  /// Joins refused because the client's network version differed from the server's.
+  #[serde(default)]
+  pub version_mismatches: u64,
+  /// Unity asset unloads (`Unloading N unused Assets to reduce memory usage. Loaded Objects
+  /// now: M.`): the object count after the last unload, and the unload count.
+  #[serde(default)]
+  pub loaded_objects: Option<u64>,
+  #[serde(default)]
+  pub asset_unloads: u64,
+  /// `Server ID N` from the Steam game server init.
+  #[serde(default)]
+  pub server_id: Option<String>,
   /// Unix time `odin start` launched the server, for `load_seconds`
   #[serde(default)]
   boot_started: Option<i64>,
@@ -217,6 +243,23 @@ impl WorldStats {
       self.record_gc_pause(&c[1]);
     } else if SEND_FAILED.is_match(line) {
       self.send_failures += 1;
+    } else if let Some(c) = CONN_STATE.captures(line) {
+      *self.connection_states.entry(c[1].to_string()).or_default() += 1;
+    } else if let Some(c) = CONN_RESULT.captures(line) {
+      *self.connection_results.entry(c[1].to_string()).or_default() += 1;
+    } else if HANDSHAKE.is_match(line) {
+      self.handshakes += 1;
+    } else if let Some(c) = NET_VERSION.captures(line) {
+      let mine: Option<u32> = c[2].parse().ok();
+      self.network_version = mine;
+      if c[1].parse::<u32>().ok() != mine {
+        self.version_mismatches += 1;
+      }
+    } else if let Some(c) = UNLOAD.captures(line) {
+      self.loaded_objects = c[1].parse().ok();
+      self.asset_unloads += 1;
+    } else if let Some(c) = SERVER_ID.captures(line) {
+      self.server_id = Some(c[1].to_string());
     } else if let Some(c) = LOAD_CHUNKS.captures(line) {
       self.zdo_count = c[1].replace(',', "").parse().ok();
       self.stat_world();
@@ -266,6 +309,20 @@ static GC_PAUSE: LazyLock<Regex> =
   LazyLock::new(|| Regex::new(r"Total: ([\d.]+) ms \(FindLiveObjects:").unwrap());
 static PACKETS: LazyLock<Regex> =
   LazyLock::new(|| Regex::new(r"ZDOS:\d+\s+sent:(\d+) recv:(\d+)").unwrap());
+static CONN_STATE: LazyLock<Regex> = LazyLock::new(|| {
+  Regex::new(r"Got status changed msg k_ESteamNetworkingConnectionState_(\w+)").unwrap()
+});
+static CONN_RESULT: LazyLock<Regex> =
+  LazyLock::new(|| Regex::new(r"Accepting connection k_EResult(\w+)").unwrap());
+static HANDSHAKE: LazyLock<Regex> =
+  LazyLock::new(|| Regex::new(r"Got handshake from client \d+").unwrap());
+static NET_VERSION: LazyLock<Regex> =
+  LazyLock::new(|| Regex::new(r"Network version check, their:(\d+), mine:(\d+)").unwrap());
+static UNLOAD: LazyLock<Regex> = LazyLock::new(|| {
+  Regex::new(r"Unloading \d+ unused Assets to reduce memory usage\. Loaded Objects now: (\d+)")
+    .unwrap()
+});
+static SERVER_ID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"Server ID (\d+)").unwrap());
 static SEND_FAILED: LazyLock<Regex> =
   LazyLock::new(|| Regex::new(r"Failed to send data k_EResult").unwrap());
 static HISTORY: LazyLock<Regex> = LazyLock::new(|| {
@@ -284,6 +341,12 @@ pub fn handle_world_events(line: &str) {
     && !line.contains("ZRpc timeout detected")
     && !line.contains("FindLiveObjects:")
     && !line.contains("Failed to send data")
+    && !line.contains("Got status changed msg")
+    && !line.contains("Accepting connection")
+    && !line.contains("Got handshake from client")
+    && !line.contains("Network version check")
+    && !line.contains("Loaded Objects now:")
+    && !line.contains("Server ID ")
     && !line.contains("has wrong password")
     && !line.contains("Player history entry")
   {
@@ -359,8 +422,41 @@ mod tests {
     assert!(s.apply("09/13/2026 17:26:59: Failed to send data k_EResultNoConnection"));
     assert!(s.apply("09/13/2026 17:26:59: Failed to send data k_EResultNoConnection"));
     assert_eq!(s.send_failures, 2);
-    // the world/session line without the packet counters is not the Total: line
-    assert!(!s.apply("09/13/2026 17:00:00: Unloading 5 unused Assets to reduce memory usage. Loaded Objects now: 100."));
+    assert!(!s.apply("09/13/2026 17:00:00: Sending message to save player profiles"));
+  }
+
+  #[test]
+  fn parses_connection_and_unload_lines() {
+    let mut s = WorldStats::default();
+    assert!(s.apply("09/13/2026 19:09:14: Server ID 90071992547409920"));
+    assert_eq!(s.server_id.as_deref(), Some("90071992547409920"));
+    assert!(s.apply("09/13/2026 19:09:42: Got handshake from client 76561190000000000"));
+    assert!(s.apply("09/13/2026 19:09:42: Network version check, their:40, mine:40"));
+    assert!(s.apply("09/13/2026 19:09:43: Network version check, their:39, mine:40"));
+    assert_eq!(s.network_version, Some(40));
+    assert_eq!(s.version_mismatches, 1);
+    assert!(s.apply(
+      "09/13/2026 19:09:42: Got status changed msg k_ESteamNetworkingConnectionState_Connecting"
+    ));
+    assert!(s.apply(
+      "09/13/2026 19:09:42: Got status changed msg k_ESteamNetworkingConnectionState_Connected"
+    ));
+    assert!(s.apply(
+      "09/13/2026 19:09:42: Got status changed msg k_ESteamNetworkingConnectionState_Connected\n"
+    ));
+    assert!(s.apply("09/13/2026 19:09:42: Accepting connection k_EResultOK"));
+    assert!(s.apply("09/13/2026 19:09:50: Accepting connection k_EResultBanned"));
+    assert_eq!(s.handshakes, 1);
+    assert_eq!(s.connection_states["Connecting"], 1);
+    assert_eq!(s.connection_states["Connected"], 2);
+    assert_eq!(s.connection_results["OK"], 1);
+    assert_eq!(s.connection_results["Banned"], 1);
+    assert!(
+      s.apply("Unloading 6 unused Assets to reduce memory usage. Loaded Objects now: 146522.")
+    );
+    assert_eq!(s.loaded_objects, Some(146522));
+    assert_eq!(s.asset_unloads, 1);
+    assert!(!s.apply("Unloading 4 Unused Serialized files (Serialized files now loaded: 8)"));
   }
 
   #[test]
