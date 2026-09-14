@@ -146,6 +146,39 @@ fn world_metrics(world: &WorldStats) -> Vec<String> {
     "valheim_send_failures_total {}",
     world.send_failures
   ));
+  out.push(format!("valheim_handshakes_total {}", world.handshakes));
+  out.push(format!(
+    "valheim_version_mismatches_total {}",
+    world.version_mismatches
+  ));
+  out.push(format!(
+    "valheim_asset_unloads_total {}",
+    world.asset_unloads
+  ));
+  for (state, n) in &world.connection_states {
+    out.push(format!(
+      "valheim_connection_state_changes_total{{state=\"{}\"}} {n}",
+      escape_prom_label_value(state)
+    ));
+  }
+  for (result, n) in &world.connection_results {
+    out.push(format!(
+      "valheim_connections_accepted_total{{result=\"{}\"}} {n}",
+      escape_prom_label_value(result)
+    ));
+  }
+  if let Some(v) = world.network_version {
+    out.push(format!("valheim_network_version {v}"));
+  }
+  if let Some(n) = world.loaded_objects {
+    out.push(format!("valheim_loaded_objects {n}"));
+  }
+  if let Some(id) = &world.server_id {
+    out.push(format!(
+      "valheim_server_id{{id=\"{}\"}} 1",
+      escape_prom_label_value(id)
+    ));
+  }
   out.push(format!("valheim_packets_sent_total {}", world.packets_sent));
   out.push(format!(
     "valheim_packets_received_total {}",
@@ -261,6 +294,19 @@ mod tests {
     world.load_seconds = Some(52.0);
     world.rpc_timeouts = 1;
     world.send_failures = 3;
+    world.handshakes = 4;
+    world.version_mismatches = 1;
+    world.asset_unloads = 2;
+    world.connection_states = [
+      ("Connected".to_string(), 4u64),
+      ("ClosedByPeer".to_string(), 2),
+    ]
+    .into_iter()
+    .collect();
+    world.connection_results = [("OK".to_string(), 3u64)].into_iter().collect();
+    world.network_version = Some(40);
+    world.loaded_objects = Some(146522);
+    world.server_id = Some("90071992547409920".to_string());
     world.packets_sent = 4467;
     world.packets_received = 1314;
     world.gc_pauses = vec![
@@ -304,6 +350,14 @@ mod tests {
     assert!(text.contains("valheim_world_load_seconds 52"));
     assert!(text.contains("valheim_rpc_timeouts_total 1"));
     assert!(text.contains("valheim_send_failures_total 3"));
+    assert!(text.contains("valheim_handshakes_total 4"));
+    assert!(text.contains("valheim_version_mismatches_total 1"));
+    assert!(text.contains("valheim_asset_unloads_total 2"));
+    assert!(text.contains("valheim_connection_state_changes_total{state=\"Connected\"} 4"));
+    assert!(text.contains("valheim_connections_accepted_total{result=\"OK\"} 3"));
+    assert!(text.contains("valheim_network_version 40"));
+    assert!(text.contains("valheim_loaded_objects 146522"));
+    assert!(text.contains("valheim_server_id{id=\"90071992547409920\"} 1"));
     assert!(text.contains("valheim_packets_sent_total 4467"));
     assert!(text.contains("valheim_packets_received_total 1314"));
     assert!(text.contains("valheim_gc_last_pause_seconds 1.5"));
