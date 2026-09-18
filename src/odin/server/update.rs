@@ -7,6 +7,7 @@ use std::{
   path::{Path, PathBuf},
   process::exit,
 };
+use sysinfo::{Pid, Signal, System};
 
 use crate::{
   constants,
@@ -98,7 +99,21 @@ pub fn clear_restart_pending() {
   }
 }
 
+/// With `UPDATE_RESTART_CONTAINER=1` a finished update stops the container instead of relaunching
+/// the game inside it. The entrypoint is PID 1 and traps TERM, so it runs its shutdown hooks and
+/// exits; the container supervisor (a Docker restart policy, Kubernetes) then starts the container
+/// again and the entrypoint launches the new build exactly as a cold start does. Relaunching in
+/// place has crashed the freshly updated build at Mono bootstrap (`mono_doorstop_bootstrap` →
+/// `PlayerMain`, signal 11) on servers running BepInEx.
+pub(crate) fn restart_container_after_update() -> bool {
+  crate::utils::environment::fetch_var("UPDATE_RESTART_CONTAINER", "0").eq("1")
+}
+
 fn start_after_update() {
+  if restart_container_after_update() {
+    stop_container_for_restart();
+    return;
+  }
   let config = load_config();
   match server::start_daemonized(config) {
     Ok(_) => info!("Server daemon started"),
@@ -107,6 +122,23 @@ fn start_after_update() {
       exit(1);
     }
   }
+}
+
+/// Asks PID 1 (the container entrypoint) to shut down. The pending-restart marker stays in
+/// place: the entrypoint's own `odin start` clears it once the new build is up, and if the
+/// container is never restarted the next `odin update` still knows the server was left stopped.
+fn stop_container_for_restart() {
+  info!("UPDATE_RESTART_CONTAINER=1: stopping the container so it comes back on the new build");
+  let system = System::new_all();
+  let Some(init) = system.process(Pid::from(1)) else {
+    error!("PID 1 not found; cannot stop the container");
+    exit(1);
+  };
+  if init.kill_with(Signal::Term).is_none() {
+    error!("Could not send TERM to PID 1; the server is stopped and will not restart on its own");
+    exit(1);
+  }
+  info!("Sent TERM to the container entrypoint");
 }
 
 /// Starts the server when an earlier update stopped it but never brought it back.
@@ -312,6 +344,24 @@ mod tests {
       extract_build_id_from_app_info(&app_info_output),
       CURRENT_BUILD_ID
     );
+  }
+
+  #[test]
+  #[serial_test::serial]
+  fn restart_container_only_when_asked() {
+    for (value, expected) in [
+      (None, false),
+      (Some("0"), false),
+      (Some(""), false),
+      (Some("1"), true),
+    ] {
+      match value {
+        Some(v) => std::env::set_var("UPDATE_RESTART_CONTAINER", v),
+        None => std::env::remove_var("UPDATE_RESTART_CONTAINER"),
+      }
+      assert_eq!(restart_container_after_update(), expected, "{value:?}");
+    }
+    std::env::remove_var("UPDATE_RESTART_CONTAINER");
   }
 
   #[test]
